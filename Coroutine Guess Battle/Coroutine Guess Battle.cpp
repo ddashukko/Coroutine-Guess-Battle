@@ -1,59 +1,118 @@
 //variant: 11
 #include <iostream>
-#include <thread>
+#include <coroutine>
 #include <random>
-#include <string>
-#include <atomic>   
-#include <chrono> 
-#include <syncstream>
+#include <chrono>
 
-using namespace std;  
- 
-int random_number(int min, int max) { 
-    static random_device rd;
-    static mt19937 mt(rd());
-    uniform_int_distribution<int> dist(min, max);
-    return dist(mt);
-}
+struct GuessGenerator {
+    struct promise_type {
+        int current_guess;
 
-void player(const string& name, int secret, atomic<bool>& finished) {
-    while (!finished.load()) {
-        int guess = random_number(1, 100);
-        {
-            osyncstream out(cout);
-            out << name << " guesses: " << guess << endl;
+        GuessGenerator get_return_object() {
+            return GuessGenerator{ std::coroutine_handle<promise_type>::from_promise(*this) };
         }
-        if (guess == secret) {
-            bool expected = false;
-            if (finished.compare_exchange_strong(expected, true)) {
-                osyncstream out(cout);
-                out << name << " WINS!" << endl;
-            }
-            return;
+
+        std::suspend_always initial_suspend() { return {}; }
+        std::suspend_always final_suspend() noexcept { return {}; }
+
+        std::suspend_always yield_value(int value) {
+            current_guess = value;
+            return {};
         }
-        this_thread::sleep_for(chrono::milliseconds(200));
+
+        void return_void() {}
+        void unhandled_exception() { std::terminate(); }
+    };
+
+    std::coroutine_handle<promise_type> handle;
+
+    GuessGenerator(std::coroutine_handle<promise_type> h) : handle(h) {}
+    ~GuessGenerator() {
+        if (handle) handle.destroy();
+    }
+
+    int get_guess() const {
+        return handle.promise().current_guess;
+    }
+
+    bool done() const {
+        return handle.done();
+    }
+
+    void resume() {
+        if (!handle.done()) handle.resume();
+    }
+};
+
+GuessGenerator player_guesser(int id) {
+    std::random_device rd;
+    std::mt19937 gen(rd() + id);
+    std::uniform_int_distribution<> distrib(1, 100);
+
+    while (true) {
+        int guess = distrib(gen);
+        co_yield guess;
     }
 }
 
 int main() {
-    int secret = random_number(1, 100);
-    {
-        osyncstream out(cout);
-        out << "Secret number chosen." << endl;
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> distrib(1, 100);
+
+    int secret_number = distrib(gen);
+
+    std::cout << "=== GAME START ===" << std::endl;
+    std::cout << "Dealer has chosen a secret number [1-100]." << std::endl;
+    std::cout << "-----------------------------------------" << std::endl;
+
+    auto player1 = player_guesser(1);
+    auto player2 = player_guesser(2);
+
+    int turn = 0;
+    bool game_over = false;
+
+    while (!game_over) {
+        turn++;
+
+        // --- Player 1 Turn ---
+        player1.resume();
+        int p1_guess = player1.get_guess();
+        std::cout << "[Turn " << turn << "] Player 1 guesses: " << p1_guess;
+
+        if (p1_guess == secret_number) {
+            std::cout << " -> CORRECT! Player 1 WINS!" << std::endl;
+            game_over = true;
+            break;
+        }
+        else if (p1_guess < secret_number) {
+            std::cout << " (Too small)" << std::endl;
+        }
+        else {
+            std::cout << " (Too big)" << std::endl;
+        }
+
+        // --- Player 2 Turn ---
+        player2.resume();
+        int p2_guess = player2.get_guess();
+        std::cout << "[Turn " << turn << "] Player 2 guesses: " << p2_guess;
+
+        if (p2_guess == secret_number) {
+            std::cout << " -> CORRECT! Player 2 WINS!" << std::endl;
+            game_over = true;
+            break;
+        }
+        else if (p2_guess < secret_number) {
+            std::cout << " (Too small)" << std::endl;
+        }
+        else {
+            std::cout << " (Too big)" << std::endl;
+        }
     }
 
-    atomic<bool> finished(false);
-
-    thread t1(player, "Player1", secret, ref(finished));
-    thread t2(player, "Player2", secret, ref(finished));
-
-    t1.join();
-    t2.join();
-
-    {
-        osyncstream out(cout);
-        out << "Game over!" << endl;
-    }
+    std::cout << "-----------------------------------------" << std::endl;
+    std::cout << "The secret number was: " << secret_number << std::endl;
+    std::cout << "=== GAME OVER ===" << std::endl;
 
     return 0;
 }
