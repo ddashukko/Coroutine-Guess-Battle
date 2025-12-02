@@ -1,15 +1,15 @@
-//variant 11
+//variant: 11
 #include <iostream>
 #include <thread>
 #include <random>
 #include <string>
-#include <atomic>
+#include <atomic>   
 #include <chrono> 
 #include <syncstream>
 
-using namespace std;
-
-int random_number(int min, int max) {
+using namespace std;  
+ 
+int random_number(int min, int max) { 
     static random_device rd;
     static mt19937 mt(rd());
     uniform_int_distribution<int> dist(min, max);
